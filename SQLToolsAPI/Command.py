@@ -2,6 +2,8 @@ import os
 import signal
 import subprocess
 import time
+import decimal
+import sublime
 
 from threading import Thread, Timer
 from .Log import Log
@@ -24,10 +26,15 @@ class Command:
         self.process = None
 
     def run(self):
+        isSelect = False
+        endsWithBye = False
         if not self.query:
             return
 
         queryTimerStart = time.time()
+
+        sublime.status_message('SQLTools: Running ...')
+        isSelect = self.query.lower().startswith('select')
 
         self.args = map(str, self.args)
         si = None
@@ -53,17 +60,41 @@ class Command:
                                            'replace').replace('\r', '')
 
         if errors:
-            resultString += errors.decode(self.encoding,
+            sqlErrors = errors.decode(self.encoding,
                                           'replace').replace('\r', '')
+            sqlErrors = sqlErrors.replace('mysql: [Warning] Using a password on the command line interface can be insecure.\n', '')
+            if sqlErrors:
+                resultString += sqlErrors
+                resultString += '-- Execute SQL Aborted::Failed'
+            else:
+                endsWithBye = resultString.endswith('\nBye\n')
+                if endsWithBye:
+                    resultString = resultString[:-5]
+                if not results and isSelect:
+                    resultString += '-- 0 rows in set\n'
+                resultString += '-- Execute SQL Finished::OK ('
+                resultString += '{0:.2f}'.format(queryTimerEnd - queryTimerStart)
+                resultString += ' sec)'
+        else:
+            endsWithBye = resultString.endswith('\nBye\n')
+            if endsWithBye:
+                resultString = resultString[:-5]
+            if not results and isSelect:
+                resultString += '-- 0 rows in set\n'
+            resultString += '-- Execute SQL Finished::OK ('
+            resultString += '{0:.2f}'.format(queryTimerEnd - queryTimerStart)
+            resultString += ' sec)'
 
         if 'show_query' in self.options and self.options['show_query']:
             resultInfo = "/*\n-- Executed querie(s) at {0} took {1}ms --".format(
                 str(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(queryTimerStart))),
-                str(queryTimerEnd - queryTimerStart))
-            resultLine = "-" * (len(resultInfo) - 3)
-            resultString = "{0}\n{1}\n{2}\n{3}\n*/\n{4}".format(
-                resultInfo, resultLine, self.query, resultLine, resultString)
+                str(queryTimerEnd-queryTimerStart)
+                )
+            resultLine = "-"*(len(resultInfo)-3)
+            resultString = "{0}\n{1}\n{2}\n{3}\n*/\n{4}".format(resultInfo,
+                resultLine,self.query,resultLine,resultString)
 
+        sublime.status_message('')
         self.callback(resultString)
 
     @staticmethod
